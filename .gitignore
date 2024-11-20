@@ -1,0 +1,27 @@
+# Application/IDE Files
+.hypothesis
+.pytest_cache
+.vs
+
+# Build Files
+dist
+*.egg-info
+
+# Testing Results
+TestResults
+htmlcov
+coverage_report
+.coverage
+coverage.xml
+report.xml
+
+# Python Files
+venv
+*.pyc
+
+# Documentation Files
+docs/api/*.rst
+public
+
+#models
+*.pt

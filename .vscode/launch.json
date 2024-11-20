@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.digitalsreeni_image_annotator.main",
+            // "program": "src/digitalsreeni_image_annotator/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                // "--data_root",
+                // "C:/Heliogen/data/Images/CircMask",
+                // "--ckpt",
+                // "C:/Code/circskynet/checkpoints/latest_deeplabv3plus_mobilenet_circsky_os16.pth",
+                // "--test_only",
+                // "--save_val_results"
+            ]
+        }
+    ]
+}
