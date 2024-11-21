@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtGui import QPixmap, QColor, QIcon, QImage, QFont, QKeySequence, QPalette
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import numpy as np
+from functools import reduce
 from tifffile import TiffFile
 from czifile import CziFile
 import cv2
@@ -18,6 +19,7 @@ from datetime import datetime
 from .image_label import ImageLabel
 from .utils import calculate_area, calculate_bbox
 from .help_window import HelpWindow
+from .export_formats import rle_to_mask, mask_to_rle, poly_to_mask, annotation_to_mask
 
 from .soft_dark_stylesheet import soft_dark_stylesheet
 from .default_stylesheet import default_stylesheet
@@ -110,6 +112,28 @@ class DimensionDialog(QDialog):
         return [combo.currentText() for combo in self.combos]
     
 
+@staticmethod
+def are_all_polygons_connected(polygons:list[Polygon]):
+    if len(polygons) < 2:
+        return True
+    
+    connected = set([0])  # Start with the first polygon
+    to_check = set(range(1, len(polygons)))
+    
+    while to_check:
+        newly_connected = set()
+        for i in connected:
+            for j in to_check:
+                if polygons[i].intersects(polygons[j]) or polygons[i].touches(polygons[j]):
+                    newly_connected.add(j)
+        
+        if not newly_connected:
+            return False  # If no new connections found, they're not all connected
+        
+        connected.update(newly_connected)
+        to_check -= newly_connected
+    
+    return True  # All polygons are connected
 
 class ImageAnnotator(QMainWindow):
     def __init__(self):
@@ -124,7 +148,7 @@ class ImageAnnotator(QMainWindow):
         self.create_menu_bar()
         
         # Initialize image_label early
-        self.image_label = ImageLabel()
+        self.image_label:ImageLabel = ImageLabel()
         self.image_label.set_main_window(self)
     
         # Initialize attributes
@@ -935,8 +959,7 @@ class ImageAnnotator(QMainWindow):
         if first_added_item:
             self.image_list.setCurrentItem(first_added_item)
             self.switch_image(first_added_item)
-        self.auto_save()  # Auto-save after adding images
-    
+        # self.auto_save()  # Auto-save after adding images    
 
     def update_all_images(self, new_image_info):
         for info in new_image_info:
@@ -1589,7 +1612,7 @@ class ImageAnnotator(QMainWindow):
                 for i, ann in enumerate(category_annotations, start=1):
                     new_ann = {
                         "segmentation": ann.get("segmentation"),
-                        "bbox": ann.get("bbox"),
+                        "bbox": ann.get("bbox", []),
                         "category_id": ann["category_id"],
                         "category_name": category_name,
                         "number": i,
@@ -1631,7 +1654,7 @@ class ImageAnnotator(QMainWindow):
     
         print("Import complete, showing message")
         QMessageBox.information(self, "Import Complete", message)
-        self.auto_save()  # Auto-save after importing annotations
+        # self.auto_save()  # Auto-save after importing annotations
     
     
     
@@ -2662,7 +2685,7 @@ class ImageAnnotator(QMainWindow):
             
             # Update UI
             self.update_ui()  
-            self.auto_save()  # Auto-save after removing an image
+            # self.auto_save()  # Auto-save after removing an image
 
 
     def load_annotations(self):
@@ -2736,8 +2759,13 @@ class ImageAnnotator(QMainWindow):
                         }
                         
                         if "segmentation" in annotation:
-                            ann["segmentation"] = annotation["segmentation"][0]
-                            ann["type"] = "polygon"
+                            seg = annotation["segmentation"]
+                            if "counts" in seg:
+                                ann["segmentation"] = seg
+                                ann["type"] = "rle"
+                            else:
+                                ann["segmentation"] = seg[0]
+                                ann["type"] = "polygon"
                         elif "bbox" in annotation:
                             ann["bbox"] = annotation["bbox"]
                             ann["type"] = "bbox"
@@ -2826,13 +2854,19 @@ class ImageAnnotator(QMainWindow):
             self.update_slice_list_colors()
     
             QMessageBox.information(self, "Annotations Deleted", f"{len(selected_items)} annotation(s) have been deleted.")  
-            self.auto_save()  # Auto-save after deleting annotations
-
+            # self.auto_save()  # Auto-save after deleting annotations
 
     def merge_annotations(self):
+        try:
+            self.merge_annotations_unsafe()
+        except Exception as err:
+            QMessageBox.warning(self, "Error while merging", f"{err}")
+        return
+
+    def merge_annotations_unsafe(self):
         if self.image_label.editing_polygon is not None:
-            QMessageBox.warning(self, "Edit Mode Active", 
-                                "Please exit the annotation edit mode before merging annotations.")
+            QMessageBox.warning(self, "Edit Mode Active",
+                "Please exit the annotation edit mode before merging annotations.")
             return
     
         selected_items = self.annotation_list.selectedItems()
@@ -2845,62 +2879,22 @@ class ImageAnnotator(QMainWindow):
             QMessageBox.warning(self, "Mixed Classes", "All selected annotations must be from the same class.")
             return
     
-        polygons = []
+        masks = []
         original_annotations = []
         for item in selected_items:
             annotation = item.data(Qt.UserRole)
             original_annotations.append(annotation)
-            if 'segmentation' in annotation:
-                points = zip(annotation['segmentation'][0::2], annotation['segmentation'][1::2])
-                polygon = Polygon(points)
-                if not polygon.is_valid:
-                    polygon = polygon.buffer(0)
-                polygons.append(polygon)
-    
-        def are_all_polygons_connected(polygons):
-            if len(polygons) < 2:
-                return True
-            
-            connected = set([0])  # Start with the first polygon
-            to_check = set(range(1, len(polygons)))
-            
-            while to_check:
-                newly_connected = set()
-                for i in connected:
-                    for j in to_check:
-                        if polygons[i].intersects(polygons[j]) or polygons[i].touches(polygons[j]):
-                            newly_connected.add(j)
-                
-                if not newly_connected:
-                    return False  # If no new connections found, they're not all connected
-                
-                connected.update(newly_connected)
-                to_check -= newly_connected
-            
-            return True  # All polygons are connected
-    
-        if not are_all_polygons_connected(polygons):
-            QMessageBox.warning(self, "Disconnected Polygons", "Not all selected annotations are connected. Please select only connected annotations to merge.")
-            return
-    
-        try:
-            merged_polygon = unary_union(polygons)
-        except Exception as e:
-            QMessageBox.warning(self, "Merge Error", f"Unable to merge the selected annotations due to an error: {str(e)}")
-            return
-    
+            mask = annotation_to_mask(annotation, 
+                self.current_image.height(), self.current_image.width())
+            masks.append(mask.astype(bool))
+        merged:np.ndarray[np.bool_] = reduce(np.logical_or, masks)
+        new_seg,_ = mask_to_rle(merged.astype(np.uint8))
         new_annotation = {
-            "segmentation": [],
+            "segmentation": new_seg,
             "category_id": self.class_mapping[class_name],
             "category_name": class_name,
         }
-    
-        if isinstance(merged_polygon, Polygon):
-            new_annotation["segmentation"] = [coord for point in merged_polygon.exterior.coords for coord in point]
-        elif isinstance(merged_polygon, MultiPolygon):
-            largest_polygon = max(merged_polygon.geoms, key=lambda p: p.area)
-            new_annotation["segmentation"] = [coord for point in largest_polygon.exterior.coords for coord in point]
-    
+
         # Ask user about keeping original annotations
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Merge Annotations")
@@ -2936,7 +2930,7 @@ class ImageAnnotator(QMainWindow):
         self.image_label.update()
     
         QMessageBox.information(self, "Merge Complete", "Annotations have been merged successfully.")
-        self.auto_save()  # Auto-save after merging annotations
+        # self.auto_save()  # Auto-save after merging annotations
     
     
         
@@ -3082,7 +3076,7 @@ class ImageAnnotator(QMainWindow):
             self.class_list.setCurrentItem(item)
             self.current_class = class_name
             print(f"Class added successfully: {class_name}")
-            self.auto_save()  # Auto-save after adding a class
+            # self.auto_save()  # Auto-save after adding a class
         except Exception as e:
             print(f"Error adding class: {e}")
             import traceback
@@ -3201,7 +3195,7 @@ class ImageAnnotator(QMainWindow):
             self.image_label.update()
             self.save_current_annotations()
             self.update_slice_list_colors()
-            self.auto_save()
+            # self.auto_save()
     
             QMessageBox.information(self, "Class Changed", f"Selected annotations have been changed to class '{new_class}'.")
 
@@ -3260,12 +3254,13 @@ class ImageAnnotator(QMainWindow):
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.ControlModifier:
-            delta = event.angleDelta().y()
-            if self.image_label.current_tool == "paint_brush":
-                self.paint_brush_size = max(1, self.paint_brush_size + delta // 120)
+            d = event.angleDelta().y()
+            s = d/abs(d)
+            if self.image_label.current_tool == "paint_brush":                
+                self.paint_brush_size = round(max(1, self.paint_brush_size + s * 0.3 * self.paint_brush_size))
                 print(f"Paint brush size: {self.paint_brush_size}")
             elif self.image_label.current_tool == "eraser":
-                self.eraser_size = max(1, self.eraser_size + delta // 120)
+                self.eraser_size = round(max(1, self.eraser_size + s * 0.3 * self.eraser_size))
                 print(f"Eraser size: {self.eraser_size}")
         else:
             super().wheelEvent(event)
@@ -3358,7 +3353,7 @@ class ImageAnnotator(QMainWindow):
             
             self.update_annotation_list_colors(class_name, color)
             self.image_label.update()
-            self.auto_save()  # Auto-save after changing class color
+            # self.auto_save()  # Auto-save after changing class color
                 
 
     
@@ -3407,7 +3402,7 @@ class ImageAnnotator(QMainWindow):
     
             # Update the image label
             self.image_label.update()
-            self.auto_save()  # Auto-save after renaming a class
+            # self.auto_save()  # Auto-save after renaming a class
     
             print(f"Class renamed from '{old_name}' to '{new_name}'")
     
@@ -3462,7 +3457,7 @@ class ImageAnnotator(QMainWindow):
             
             # Inform the user
             QMessageBox.information(self, "Class Deleted", f"The class '{class_name}' has been deleted.")
-            self.auto_save()  # Auto-save after deleting a class
+            # self.auto_save()  # Auto-save after deleting a class
         else:
             # User cancelled the operation
             QMessageBox.information(self, "Deletion Cancelled", "The class deletion was cancelled.")
@@ -3491,7 +3486,7 @@ class ImageAnnotator(QMainWindow):
             
             # Update the slice list colors
             self.update_slice_list_colors()
-            self.auto_save()  # Auto-save after adding a polygon annotation
+            # self.auto_save()  # Auto-save after adding a polygon annotation
 
 
     def highlight_annotation(self, item):
@@ -3577,7 +3572,7 @@ class ImageAnnotator(QMainWindow):
             
             # Update the slice list colors
             self.update_slice_list_colors()
-            self.auto_save()
+            # self.auto_save()
 
     def enter_edit_mode(self, annotation):
         self.editing_mode = True

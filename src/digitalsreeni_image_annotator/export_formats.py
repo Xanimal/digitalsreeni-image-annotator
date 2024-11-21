@@ -12,7 +12,52 @@ from datetime import datetime
 import numpy as np
 import skimage.draw
 from PIL import Image
+from pycocotools import mask as maskUtils
 
+def rle_to_mask(rle, shape, fill_val:np.uint8 = 1) -> np.ndarray[np.uint8]:
+    """
+    Decodes an RLE encoded mask into a binary mask.
+
+    :param rle: RLE encoded mask (a dictionary with 'counts' and 'size' keys)
+    :param shape: The shape of the output mask (height, width)
+    :return: A binary mask as a numpy array
+    """
+
+    if isinstance(rle, str):
+        rle = rle.encode('utf-8')
+
+    rle = maskUtils.frPyObjects(rle, shape[0], shape[1])
+    mask = maskUtils.decode(rle)    
+    return mask * fill_val
+
+def mask_to_rle(binary_mask:np.ndarray) -> tuple[dict[str,list],int]:
+    flattened_mask = binary_mask.ravel(order="F")
+    diff_arr = np.diff(flattened_mask)
+    nonzero_indices = np.where(diff_arr != 0)[0] + 1
+    count_nonzero:int = len(nonzero_indices)
+    lengths = np.diff(np.concatenate(([0], nonzero_indices, [len(flattened_mask)])))
+
+    # note that the odd counts are always the numbers of zeros
+    if flattened_mask[0] == 1:
+        lengths = np.concatenate(([0], lengths))
+
+    rle:dict[str,list] = {"counts":  lengths.tolist(), "size": list(binary_mask.shape)}
+    return rle, count_nonzero
+
+def poly_to_mask(seg_poly, img_height, img_width, fill_val:np.uint8 = 1):
+    polygon = np.array(seg_poly).reshape(-1, 2)
+    rr, cc = skimage.draw.polygon(polygon[:, 1], polygon[:, 0], (img_height, img_width))
+    mask = np.zeros((img_height, img_width), np.uint8)
+    mask[rr, cc] = fill_val
+    return mask
+
+def annotation_to_mask(annotation:dict[str,any], img_height, img_width, fill_val:np.uint8 = 1) -> np.ndarray[np.uint8]:
+    if "segmentation" not in annotation:
+        raise Exception("did not pass in a segmentation annotation")
+    seg = annotation["segmentation"]
+    if type(seg) is dict and "counts" in seg:
+        return rle_to_mask(seg, [img_height, img_width], fill_val)
+    return poly_to_mask(seg, img_height, img_width, fill_val)
 
 # Utility function to handle the COCO conversion for all export formats
 def convert_to_coco(all_annotations, class_mapping, image_paths, slices, image_slices):
@@ -134,8 +179,12 @@ def create_coco_annotation(ann, image_id, annotation_id, class_name, class_mappi
     }
     
     if "segmentation" in ann:
-        coco_ann["segmentation"] = [ann["segmentation"]]
-        coco_ann["bbox"] = calculate_bbox(ann["segmentation"])
+        seg = ann["segmentation"]
+        if type(seg) is dict and "counts" in seg:
+            coco_ann["segmentation"] = seg
+        else:
+            coco_ann["segmentation"] = [seg]
+            coco_ann["bbox"] = calculate_bbox(seg)
     elif "bbox" in ann:
         coco_ann["bbox"] = ann["bbox"]
     
@@ -309,15 +358,21 @@ def export_labeled_images(all_annotations, class_mapping, image_paths, slices, i
 
         for class_name, class_annotations in annotations.items():
             mask = class_masks[class_name]
-            for ann in class_annotations:
+            for anno in class_annotations:
                 object_number = np.max(mask) + 1  # Increment object number for this class
                 
-                if 'segmentation' in ann:
-                    polygon = np.array(ann['segmentation']).reshape(-1, 2)
-                    rr, cc = skimage.draw.polygon(polygon[:, 1], polygon[:, 0], (img_height, img_width))
-                    mask[rr, cc] = object_number
-                elif 'bbox' in ann:
-                    x, y, w, h = map(int, ann['bbox'])
+                if 'segmentation' in anno:
+                    seg = anno['segmentation']
+                    if type(seg) is dict and 'counts' in seg:
+                        binaryMask = rle_to_mask(seg, (img_height, img_width))
+                        boolMask = binaryMask > 0
+                        mask[boolMask] = object_number
+                    else:
+                        polygon = np.array(seg).reshape(-1, 2)
+                        rr, cc = skimage.draw.polygon(polygon[:, 1], polygon[:, 0], (img_height, img_width))
+                        mask[rr, cc] = object_number
+                elif 'bbox' in anno:
+                    x, y, w, h = map(int, anno['bbox'])
                     mask[y:y+h, x:x+w] = object_number
 
             class_summary[class_name].append(file_name_img)

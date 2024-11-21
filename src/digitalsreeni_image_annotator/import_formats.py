@@ -65,8 +65,13 @@ def import_coco_json(file_path, class_mapping):
         }
 
         if 'segmentation' in ann:
-            annotation['segmentation'] = ann['segmentation'][0]
-            annotation['type'] = 'polygon'
+            seg = ann['segmentation']
+            if type(seg) is dict and "counts" in seg:
+                annotation["segmentation"] = seg
+                annotation['type'] = 'rle'
+            else:
+                annotation['segmentation'] = seg[0]
+                annotation['type'] = 'polygon'
         elif 'bbox' in ann:
             annotation['bbox'] = ann['bbox']
             annotation['type'] = 'rectangle'

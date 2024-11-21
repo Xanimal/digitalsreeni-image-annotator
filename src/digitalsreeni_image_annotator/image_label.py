@@ -8,7 +8,7 @@ displaying the image and handling annotation interactions.
 Dr. Sreenivas Bhattiprolu
 """
 
-from PyQt5.QtWidgets import QLabel, QApplication, QMessageBox
+from PyQt5.QtWidgets import QMainWindow, QLabel, QApplication, QMessageBox
 from PyQt5.QtGui import (QPainter, QPen, QColor, QFont, QPolygonF, QBrush, QPolygon,
                          QPixmap, QImage, QWheelEvent, QMouseEvent, QKeyEvent)
 from PyQt5.QtCore import Qt, QPoint, QPointF, QRectF, QSize
@@ -17,10 +17,10 @@ import os
 import warnings
 import cv2
 import numpy as np
+# from .annotator_window import ImageAnnotator
+from .export_formats import rle_to_mask, mask_to_rle, poly_to_mask, annotation_to_mask
 
 warnings.filterwarnings("ignore", category=UserWarning)
-
-
 
 
 class ImageLabel(QLabel):
@@ -76,8 +76,6 @@ class ImageLabel(QLabel):
         self.temp_annotations = []
 
 
-
-        
     def set_main_window(self, main_window):
         self.main_window = main_window
     
@@ -170,8 +168,10 @@ class ImageLabel(QLabel):
         self.is_painting = False
         # Don't commit the annotation yet, just keep the temp_paint_mask
         
-        
     def commit_paint_annotation(self):
+        self.commit_paint_annotation_rle()
+
+    def commit_paint_annotation_poly(self):
         if self.temp_paint_mask is not None and self.main_window.current_class:
             class_name = self.main_window.current_class
             contours, _ = cv2.findContours(self.temp_paint_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -185,6 +185,22 @@ class ImageLabel(QLabel):
                     }
                     self.annotations.setdefault(class_name, []).append(new_annotation)
                     self.main_window.add_annotation_to_list(new_annotation)
+            self.temp_paint_mask = None
+            self.main_window.save_current_annotations()
+            self.main_window.update_slice_list_colors()
+            self.update()
+
+    def commit_paint_annotation_rle(self):
+        if self.temp_paint_mask is not None and self.main_window.current_class:
+            class_name = self.main_window.current_class
+            segmentation, _ = mask_to_rle(self.temp_paint_mask)
+            new_annotation = {
+                "segmentation": segmentation,
+                "category_id": self.main_window.class_mapping[class_name],
+                "category_name": class_name,
+            }
+            self.annotations.setdefault(class_name, []).append(new_annotation)
+            self.main_window.add_annotation_to_list(new_annotation)
             self.temp_paint_mask = None
             self.main_window.save_current_annotations()
             self.main_window.update_slice_list_colors()
@@ -226,25 +242,35 @@ class ImageLabel(QLabel):
                 max_number = max([ann.get('number', 0) for ann in annotations] + [0])
                 for annotation in annotations:
                     if "segmentation" in annotation:
-                        points = np.array(annotation["segmentation"]).reshape(-1, 2).astype(int)
-                        mask = np.zeros_like(self.temp_eraser_mask)
-                        cv2.fillPoly(mask, [points], 255)
-                        mask = mask.astype(bool)
-                        mask[eraser_mask] = False
-                        contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        for i, contour in enumerate(contours):
-                            if cv2.contourArea(contour) > 10:  # Minimum area threshold
-                                new_segmentation = contour.flatten().tolist()
-                                new_annotation = annotation.copy()
-                                new_annotation["segmentation"] = new_segmentation
-                                if i == 0:
-                                    new_annotation["number"] = annotation.get("number", max_number + 1)
-                                else:
-                                    max_number += 1
-                                    new_annotation["number"] = max_number
-                                updated_annotations.append(new_annotation)
-                        if len(contours) > 1:
-                            annotations_changed = True
+                        seg = annotation["segmentation"]
+                        if type(seg) is dict and "counts" in seg: #rle
+                            mask:np.ndarray = rle_to_mask(seg, (eraser_mask.shape[0], eraser_mask.shape[1]))
+                            mask = mask.astype(bool)
+                            mask[eraser_mask] = False
+                            new_seg, area = mask_to_rle(mask.astype(np.uint8))
+                            new_annotation = annotation.copy()
+                            new_annotation["segmentation"] = new_seg
+                            updated_annotations.append(new_annotation)
+                        else: #polygon
+                            points = np.array(seg).reshape(-1, 2).astype(int)
+                            mask = np.zeros_like(self.temp_eraser_mask)
+                            cv2.fillPoly(mask, [points], 255)
+                            mask = mask.astype(bool)
+                            mask[eraser_mask] = False
+                            contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            for i, contour in enumerate(contours):
+                                if cv2.contourArea(contour) > 10:  # Minimum area threshold
+                                    new_segmentation = contour.flatten().tolist()
+                                    new_annotation = annotation.copy()
+                                    new_annotation["segmentation"] = new_segmentation
+                                    if i == 0:
+                                        new_annotation["number"] = annotation.get("number", max_number + 1)
+                                    else:
+                                        max_number += 1
+                                        new_annotation["number"] = max_number
+                                    updated_annotations.append(new_annotation)
+                            if len(contours) > 1:
+                                annotations_changed = True
                     else:
                         updated_annotations.append(annotation)
                 self.annotations[class_name] = updated_annotations
@@ -552,7 +578,19 @@ class ImageLabel(QLabel):
     
                 if "segmentation" in annotation:
                     segmentation = annotation["segmentation"]
-                    if isinstance(segmentation, list) and len(segmentation) > 0:
+                    if type(segmentation) is dict and "counts" in segmentation: #rle
+                        sz = segmentation["size"]
+                        h = sz[0]
+                        w = sz[1]
+                        seg_mask:np.ndarray = rle_to_mask(segmentation, sz).astype(np.bool_)
+                        z = np.zeros((h, w, 4), np.uint8)
+                        z[seg_mask] = fill_color.getRgb()
+                        mask_image = QImage(z.copy().data, w, h, 4*w, QImage.Format_RGBA8888)
+                        mask_pixmap = QPixmap.fromImage(mask_image)
+                        painter.setOpacity(0.3)
+                        painter.drawPixmap(0, 0, mask_pixmap)
+                        painter.setOpacity(1.0)
+                    elif isinstance(segmentation, list) and len(segmentation) > 0:#polygon(s)
                         if isinstance(segmentation[0], list):  # Multiple polygons
                             for polygon in segmentation:
                                 points = [QPointF(float(x), float(y)) for x, y in zip(polygon[0::2], polygon[1::2])]
