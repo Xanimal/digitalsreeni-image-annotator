@@ -1101,7 +1101,7 @@ class ImageAnnotator(QMainWindow):
                 self.update_image_info()
             
             self.image_list.setCurrentItem(item)
-            self.set_zoom(1.0)
+            self.set_zoom(0.6)
             self.image_label.update()
             self.update_slice_list_colors()
         else:
