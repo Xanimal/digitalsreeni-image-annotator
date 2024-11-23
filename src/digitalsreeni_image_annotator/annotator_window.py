@@ -1,5 +1,6 @@
 import os
 import json
+import traceback
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QFileDialog, QListWidget, QInputDialog, 
                              QLabel, QButtonGroup, QListWidgetItem, QScrollArea, QCheckBox,
@@ -169,8 +170,8 @@ class ImageAnnotator(QMainWindow):
         self.image_shapes = {}
         
         #For paint brush and eraser
-        self.paint_brush_size = 10
-        self.eraser_size = 10
+        self.paint_brush_size = 100
+        self.eraser_size = 100
         # Initialize SAM utils
         self.current_sam_model = None
         self.sam_utils = SAMUtils()
@@ -379,7 +380,7 @@ class ImageAnnotator(QMainWindow):
                 
         
             print(f"Project opened successfully: {project_file}")
-            QMessageBox.information(self, "Project Opened", f"Project opened successfully: {os.path.basename(project_file)}")
+            # QMessageBox.information(self, "Project Opened", f"Project opened successfully: {os.path.basename(project_file)}")
         
         else:
             print(f"Project file not found: {project_file}")
@@ -393,38 +394,38 @@ class ImageAnnotator(QMainWindow):
         message += "\n\nWould you like to locate these images now?"
         
         reply = QMessageBox.question(self, "Missing Images", message, 
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         
         if reply == QMessageBox.Yes:
             self.load_missing_images(missing_images)
         else:
             self.remove_missing_images(missing_images)
-            
 
     def remove_missing_images(self, missing_images):
         for image_name in missing_images:
-            # Remove from all_images
-            self.all_images = [img for img in self.all_images if img['file_name'] != image_name]
-            
-            # Remove from image_paths
-            self.image_paths.pop(image_name, None)
-            
-            # Remove from all_annotations
-            self.all_annotations.pop(image_name, None)
-            
-            # If it's a multi-slice image, remove all related slices
-            base_name = os.path.splitext(image_name)[0]
-            if base_name in self.image_slices:
-                for slice_name, _ in self.image_slices[base_name]:
-                    self.all_annotations.pop(slice_name, None)
-                del self.image_slices[base_name]
-        
+            self.remove_image(image_name, False)
         self.update_ui()
         QMessageBox.information(self, "Images Removed", 
-                                f"{len(missing_images)} missing images and their annotations have been removed from the project.")
-
-
+            f"{len(missing_images)} missing images and their annotations have been removed from the project.")
         
+    def remove_image(self, image_name, update_ui:bool = True):
+        # Remove from all_images
+        self.all_images = [img for img in self.all_images if img['file_name'] != image_name]
+        
+        # Remove from image_paths
+        self.image_paths.pop(image_name, None)
+        
+        # Remove from all_annotations
+        self.all_annotations.pop(image_name, None)
+        
+        # If it's a multi-slice image, remove all related slices
+        base_name = os.path.splitext(image_name)[0]
+        if base_name in self.image_slices:
+            for slice_name, _ in self.image_slices[base_name]:
+                self.all_annotations.pop(slice_name, None)
+            del self.image_slices[base_name]
+        if update_ui:
+            self.update_ui()        
     
     def prompt_load_missing_images(self, missing_images):
         message = "The following images have annotations but were not found in the project directory:\n\n"
@@ -478,7 +479,7 @@ class ImageAnnotator(QMainWindow):
 
     def update_image_list(self):
         self.image_list.clear()
-        for image_info in self.all_images:
+        for image_info in sorted(self.all_images, key=lambda x: x['file_name']):
             self.image_list.addItem(image_info['file_name'])
 
     def select_class(self, index):
@@ -1036,6 +1037,8 @@ class ImageAnnotator(QMainWindow):
         # Reset zoom level to default (1.0)
         self.set_zoom(1.0)
 
+    def switch_to_selected_image(self):
+        self.switch_image(self.image_list.currentItem())
 
     def switch_image(self, item):
         if item is None:
@@ -1101,7 +1104,7 @@ class ImageAnnotator(QMainWindow):
                 self.update_image_info()
             
             self.image_list.setCurrentItem(item)
-            self.set_zoom(0.6)
+            self.set_zoom(0.55)
             self.image_label.update()
             self.update_slice_list_colors()
         else:
@@ -2165,6 +2168,8 @@ class ImageAnnotator(QMainWindow):
         self.delete_button.clicked.connect(self.delete_selected_annotations)
         self.merge_button = QPushButton("Merge")
         self.merge_button.clicked.connect(self.merge_annotations)
+        self.merge_all_button = QPushButton("MergeAll")
+        self.merge_all_button.clicked.connect(self.merge_all)
         self.change_class_button = QPushButton("Change Class")
         self.change_class_button.clicked.connect(self.change_annotation_class)
         
@@ -2172,6 +2177,7 @@ class ImageAnnotator(QMainWindow):
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.delete_button)
         button_layout.addWidget(self.merge_button)
+        button_layout.addWidget(self.merge_all_button)
         button_layout.addWidget(self.change_class_button)
         
         # Add the button layout to the annotation layout
@@ -2367,13 +2373,14 @@ class ImageAnnotator(QMainWindow):
         self.image_list_layout.addWidget(self.image_list_label)
 
         self.image_list = QListWidget()
-        self.image_list.itemClicked.connect(self.switch_image)
+        # self.image_list.itemClicked.connect(self.switch_image)
+        self.image_list.itemSelectionChanged.connect(self.switch_to_selected_image)
         self.image_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.image_list.customContextMenuRequested.connect(self.show_image_context_menu)
         self.image_list_layout.addWidget(self.image_list)
 
         self.clear_all_button = QPushButton("Clear All Images and Annotations")
-        self.clear_all_button.clicked.connect(self.clear_all)
+        self.clear_all_button.clicked.connect(self.clear_all)        
         self.image_list_layout.addWidget(self.clear_all_button)
 
 ##########    ### Tools  ########## I love useful image processing tools :)
@@ -2436,7 +2443,7 @@ class ImageAnnotator(QMainWindow):
     def clear_all(self, new_project=False, show_messages=True):
         if not new_project and show_messages:
             reply = self.show_question('Clear All',
-                                       "Are you sure you want to clear all images and annotations? This action cannot be undone.")
+                "Are you sure you want to clear all images and annotations? This action cannot be undone.")
             if reply != QMessageBox.Yes:
                 return
     
@@ -2505,8 +2512,6 @@ class ImageAnnotator(QMainWindow):
         # Update UI
         self.image_label.update()
         self.update_image_info()
-
-       
         
         # Force a repaint of the main window
         self.repaint()
@@ -2566,7 +2571,8 @@ class ImageAnnotator(QMainWindow):
             return  # Do nothing for multi-dimensional images
         
         if not self.yolo_trainer or not self.yolo_trainer.model:
-            QMessageBox.warning(self, "No Model", "Please load a YOLO model first from the YOLO > Prediction Settings > Load Model menu.")
+            QMessageBox.warning(self, "No Model", 
+                "Please load a YOLO model first from the YOLO > Prediction Settings > Load Model menu.")
             return
         
         # Deactivate SAM tool before prediction
@@ -2588,9 +2594,9 @@ class ImageAnnotator(QMainWindow):
             return  # Exit the method if it's not a TIFF or CZI file
     
         reply = QMessageBox.warning(self, "Redefine Dimensions",
-                                    "Redefining dimensions will cause all associated annotations to be lost. "
-                                    "Do you want to continue?",
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            "Redefining dimensions will cause all associated annotations to be lost. "
+            "Do you want to continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         
         if reply == QMessageBox.Yes:
             # Remove existing annotations for this file
@@ -2821,9 +2827,11 @@ class ImageAnnotator(QMainWindow):
             QMessageBox.warning(self, "No Selection", "Please select an annotation to delete.")
             return
         
-        reply = QMessageBox.question(self, 'Delete Annotations',
-                                     f"Are you sure you want to delete {len(selected_items)} annotation(s)?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(
+            self, 'Delete Annotations',
+            f"Are you sure you want to delete {len(selected_items)} annotation(s)?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
         if reply == QMessageBox.Yes:
             # Create a list of annotations to remove
             annotations_to_remove = []
@@ -2861,6 +2869,13 @@ class ImageAnnotator(QMainWindow):
             self.merge_annotations_unsafe()
         except Exception as err:
             QMessageBox.warning(self, "Error while merging", f"{err}")
+        return
+
+    def merge_all(self):
+        try:
+            self.merge_all_unsafe()
+        except Exception as err:
+            QMessageBox.warning(self, "Error while merging", f"{err}: {traceback.format_exc()}")
         return
 
     def merge_annotations_unsafe(self):
@@ -2933,9 +2948,50 @@ class ImageAnnotator(QMainWindow):
         # self.auto_save()  # Auto-save after merging annotations
     
     
+    def merge_all_unsafe(self):
+        items = []
+        for i in range(self.annotation_list.count()):
+            items.append(self.annotation_list.item(i))
+        class_name = items[0].data(Qt.UserRole)['category_name']
+        if not all(item.data(Qt.UserRole)['category_name'] == class_name for item in items):
+            QMessageBox.warning(self, "Mixed Classes", "All annotations must be from the same class.")
+            return
+    
+        masks = []
+        original_annotations = []
+        for item in items:
+            annotation = item.data(Qt.UserRole)
+            original_annotations.append(annotation)
+            mask = annotation_to_mask(annotation, 
+                self.current_image.height(), self.current_image.width())
+            masks.append(mask.astype(bool))
+        merged:np.ndarray[np.bool_] = reduce(np.logical_or, masks)
+        new_seg,_ = mask_to_rle(merged.astype(np.uint8))
+        new_annotation = {
+            "segmentation": new_seg,
+            "category_id": self.class_mapping[class_name],
+            "category_name": class_name,
+        }
+    
+        for annotation in original_annotations:
+            if annotation in self.image_label.annotations[class_name]:
+                self.image_label.annotations[class_name].remove(annotation)
+    
+        self.image_label.annotations.setdefault(class_name, []).append(new_annotation)
+    
+        current_name = self.current_slice or self.image_file_name
+        self.all_annotations[current_name] = self.image_label.annotations
+    
+        self.renumber_annotations()
+        self.update_annotation_list()
+        self.save_current_annotations()
+        self.update_slice_list_colors()
+        self.image_label.update()
+        # self.auto_save()  # Auto-save after merging annotations
         
     def delete_selected_image(self):
         current_item = self.image_list.currentItem()
+        current_row = self.image_list.currentRow()
         if current_item:
             file_name = current_item.text()
             reply = QMessageBox.question(self, 'Delete Image',
@@ -2945,7 +3001,7 @@ class ImageAnnotator(QMainWindow):
             
             if reply == QMessageBox.Yes:
                 # Remove from all data structures
-                self.image_list.takeItem(self.image_list.row(current_item))
+                self.image_list.takeItem(current_row)
                 self.image_paths.pop(file_name, None)
                 self.all_images = [img for img in self.all_images if img["file_name"] != file_name]
                 
@@ -2972,9 +3028,10 @@ class ImageAnnotator(QMainWindow):
                     self.annotation_list.clear()
                 
                 # Switch to another image if available
-                if self.image_list.count() > 0:
-                    next_item = self.image_list.item(0)
-                    self.image_list.setCurrentItem(next_item)
+                count = self.image_list.count()
+                if count > 0:
+                    next_item = self.image_list.item(min(count, current_row))
+                    self.image_list.setCurrentRow(min(count, current_row))
                     self.switch_image(next_item)
                 else:
                     # No images left
@@ -2986,7 +3043,7 @@ class ImageAnnotator(QMainWindow):
                     self.slice_list.clear()
                 
                 # Update UI
-                self.update_ui()
+                self.update_ui(False)
                 
                 QMessageBox.information(self, "Image Deleted", f"The image '{file_name}' has been deleted.")
             
@@ -3010,8 +3067,9 @@ class ImageAnnotator(QMainWindow):
             self.image_label.clear()
             print("No current image to display")
             
-    def update_ui(self):
-        self.update_image_list()
+    def update_ui(self, update_image_list:bool = True):
+        if update_image_list:
+            self.update_image_list()
         self.update_slice_list()
         self.update_class_list()
         self.update_annotation_list()

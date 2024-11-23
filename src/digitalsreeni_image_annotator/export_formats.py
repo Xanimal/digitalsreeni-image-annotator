@@ -362,15 +362,7 @@ def export_labeled_images(all_annotations, class_mapping, image_paths, slices, i
                 object_number = np.max(mask) + 1  # Increment object number for this class
                 
                 if 'segmentation' in anno:
-                    seg = anno['segmentation']
-                    if type(seg) is dict and 'counts' in seg:
-                        binaryMask = rle_to_mask(seg, (img_height, img_width))
-                        boolMask = binaryMask > 0
-                        mask[boolMask] = object_number
-                    else:
-                        polygon = np.array(seg).reshape(-1, 2)
-                        rr, cc = skimage.draw.polygon(polygon[:, 1], polygon[:, 0], (img_height, img_width))
-                        mask[rr, cc] = object_number
+                    mask = annotation_to_mask(anno, img_height, img_width, object_number)
                 elif 'bbox' in anno:
                     x, y, w, h = map(int, anno['bbox'])
                     mask[y:y+h, x:x+w] = object_number
@@ -470,9 +462,7 @@ def export_semantic_labels(all_annotations, class_mapping, image_paths, slices, 
             pixel_value = class_to_pixel[class_name]
             for ann in class_annotations:
                 if 'segmentation' in ann:
-                    polygon = np.array(ann['segmentation']).reshape(-1, 2)
-                    rr, cc = skimage.draw.polygon(polygon[:, 1], polygon[:, 0], (img_height, img_width))
-                    semantic_mask[rr, cc] = pixel_value
+                    semantic_mask = annotation_to_mask(ann, img_height, img_width, pixel_value)
                 elif 'bbox' in ann:
                     x, y, w, h = map(int, ann['bbox'])
                     semantic_mask[y:y+h, x:x+w] = pixel_value

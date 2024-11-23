@@ -395,16 +395,18 @@ class ImageLabel(QLabel):
             painter.translate(self.offset_x, self.offset_y)
             painter.scale(self.zoom_factor, self.zoom_factor)
             
-            mask_image = QImage(self.temp_paint_mask.data, self.temp_paint_mask.shape[1], self.temp_paint_mask.shape[0], self.temp_paint_mask.shape[1], QImage.Format_Grayscale8)
+            mask_image = QImage(
+                self.temp_paint_mask.data, 
+                self.temp_paint_mask.shape[1], 
+                self.temp_paint_mask.shape[0], 
+                self.temp_paint_mask.shape[1], 
+                QImage.Format_Grayscale8)
             mask_pixmap = QPixmap.fromImage(mask_image)
-            painter.setOpacity(0.5)
+            painter.setOpacity(0.25)
             painter.drawPixmap(0, 0, mask_pixmap)
             painter.setOpacity(1.0)
             
             painter.restore()
-            
-            
-        
     
     def draw_temp_eraser_mask(self, painter):
         if self.temp_eraser_mask is not None:
@@ -412,9 +414,14 @@ class ImageLabel(QLabel):
             painter.translate(self.offset_x, self.offset_y)
             painter.scale(self.zoom_factor, self.zoom_factor)
             
-            mask_image = QImage(self.temp_eraser_mask.data, self.temp_eraser_mask.shape[1], self.temp_eraser_mask.shape[0], self.temp_eraser_mask.shape[1], QImage.Format_Grayscale8)
+            mask_image = QImage(
+                self.temp_eraser_mask.data, 
+                self.temp_eraser_mask.shape[1], 
+                self.temp_eraser_mask.shape[0], 
+                self.temp_eraser_mask.shape[1], 
+                QImage.Format_Grayscale8)
             mask_pixmap = QPixmap.fromImage(mask_image)
-            painter.setOpacity(0.5)
+            painter.setOpacity(0.25)
             painter.drawPixmap(0, 0, mask_pixmap)
             painter.setOpacity(1.0)
             
