@@ -635,7 +635,7 @@ class ImageAnnotator(QMainWindow):
     
         # Save project data
         with open(self.current_project_file, 'w') as f:
-            json.dump(self.convert_to_serializable(project_data), f, indent=2)
+            json.dump(self.convert_to_serializable(project_data), f)
     
         if show_message:
             self.show_info("Project Saved", f"Project saved to {self.current_project_file}")
