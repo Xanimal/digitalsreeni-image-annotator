@@ -390,9 +390,10 @@ def export_labeled_images(all_annotations, class_mapping, image_paths, slices, i
 
 
 def export_semantic_labels(all_annotations, class_mapping, image_paths, slices, image_slices, output_dir):
+    is_binary = len(class_mapping) == 1
     # Create output directories
-    images_dir = os.path.join(output_dir, 'images')
-    segmented_images_dir = os.path.join(output_dir, 'segmented_images')
+    images_dir = os.path.join(output_dir, 'images')    
+    segmented_images_dir = os.path.join(output_dir, 'masks' if is_binary else 'segmented_images')
     os.makedirs(images_dir, exist_ok=True)
     os.makedirs(segmented_images_dir, exist_ok=True)
 
@@ -468,16 +469,17 @@ def export_semantic_labels(all_annotations, class_mapping, image_paths, slices, 
                     semantic_mask[y:y+h, x:x+w] = pixel_value
 
         # Save semantic mask
-        mask_filename = f"{os.path.splitext(file_name_img)[0]}_semantic_mask.png"
+        mask_filename = f"{os.path.splitext(file_name_img)[0]}.png"
         mask_path = os.path.join(segmented_images_dir, mask_filename)
         Image.fromarray(semantic_mask).save(mask_path)
 
-    # Create class mapping text file
-    mapping_path = os.path.join(segmented_images_dir, 'class_pixel_mapping.txt')
-    with open(mapping_path, 'w') as f:
-        f.write("Pixel Value : Class Name\n")
-        for class_name, pixel_value in class_to_pixel.items():
-            f.write(f"{pixel_value} : {class_name}\n")
+    if not is_binary:
+        # Create class mapping text file
+        mapping_path = os.path.join(segmented_images_dir, 'class_pixel_mapping.txt')
+        with open(mapping_path, 'w') as f:
+            f.write("Pixel Value : Class Name\n")
+            for class_name, pixel_value in class_to_pixel.items():
+                f.write(f"{pixel_value} : {class_name}\n")
 
     return output_dir
 
